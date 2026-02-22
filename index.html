@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>AI 智能拼豆图纸生成器</title>
+    <script src="https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.4.5/dist/bundle.js"></script>
+    <style>
+        body { font-family: -apple-system, sans-serif; background: #f4f7f9; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .card { background: white; padding: 30px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); max-width: 900px; width: 100%; text-align: center; }
+        .controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; margin: 20px 0; padding: 20px; border-top: 1px solid #eee; }
+        canvas { border: 1px solid #ddd; background-image: linear-gradient(45deg, #eee 25%, transparent 25%, transparent 75%, #eee 75%), linear-gradient(45deg, #eee 25%, transparent 25%, transparent 75%, #eee 75%); background-size: 20px 20px; background-position: 0 0, 10px 10px; max-width: 100%; height: auto; margin-top: 20px; }
+        button { background: #2ea44f; color: white; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        button:disabled { background: #94d3a2; cursor: not-allowed; }
+        .status { color: #666; font-size: 14px; margin: 10px 0; height: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h1>🎨 拼豆图纸生成器 (AI 版)</h1>
+    <p>完全本地处理 • 无需注册 • 免费使用</p>
+    
+    <div class="controls">
+        <input type="file" id="upload" accept="image/*">
+        <div>
+            <label>横向豆子数: </label>
+            <input type="number" id="gridSize" value="50" min="10" max="120" style="width: 60px;">
+        </div>
+        <button id="downloadBtn" style="display: none;">下载图纸</button>
+    </div>
+    
+    <div id="status" class="status">等待上传图片...</div>
+    <canvas id="outputCanvas"></canvas>
+</div>
+
+<script>
+    const upload = document.getElementById('upload');
+    const gridSizeInput = document.getElementById('gridSize');
+    const status = document.getElementById('status');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const canvas = document.getElementById('outputCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // 拼豆标准色卡 (这里仅列出部分，你可以查阅 Hama/Perler 官网补充 RGB)
+    const PALETTE = [
+        { name: 'Black', rgb: [0,0,0] }, { name: 'White', rgb: [255,255,255] },
+        { name: 'Red', rgb: [190,0,0] }, { name: 'Blue', rgb: [0,0,150] },
+        { name: 'Yellow', rgb: [255,230,0] }, { name: 'Green', rgb: [0,120,0] }
+    ];
+
+    upload.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        try {
+            status.innerText = "🔍 AI 正在识别主体并移除背景 (第一次可能较慢)...";
+            upload.disabled = true;
+
+            // 1. 调用 AI 抠图
+            const blob = await imglyRemoveBackground(file);
+            const img = new Image();
+            img.src = URL.createObjectURL(blob);
+            
+            img.onload = () => {
+                generatePattern(img);
+                status.innerText = "✨ 生成成功！";
+                upload.disabled = false;
+                downloadBtn.style.display = 'inline-block';
+            };
+        } catch (err) {
+            status.innerText = "❌ 处理失败，请重试";
+            upload.disabled = false;
+        }
+    });
+
+    function generatePattern(img) {
+        const beadsX = parseInt(gridSizeInput.value);
+        const ratio = img.height / img.width;
+        const beadsY = Math.round(beadsX * ratio);
+        const cellSize = 15; // 网页显示大小
+
+        canvas.width = beadsX * cellSize;
+        canvas.height = beadsY * cellSize;
+
+        // 离屏处理像素
+        const offCanvas = document.createElement('canvas');
+        const offCtx = offCanvas.getContext('2d');
+        offCanvas.width = beadsX;
+        offCanvas.height = beadsY;
+        offCtx.drawImage(img, 0, 0, beadsX, beadsY);
+        const imgData = offCtx.getImageData(0, 0, beadsX, beadsY).data;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        for (let y = 0; y < beadsY; y++) {
+            for (let x = 0; x < beadsX; x++) {
+                const i = (y * beadsX + x) * 4;
+                const r = imgData[i], g = imgData[i+1], b = imgData[i+2], a = imgData[i+3];
+
+                if (a > 150) { // 只处理不透明部分
+                    const color = findNearestColor(r, g, b);
+                    drawBead(x, y, cellSize, color);
+                }
+            }
+        }
+    }
+
+    function findNearestColor(r, g, b) {
+        let min = Infinity, best = PALETTE[0].rgb;
+        for (const item of PALETTE) {
+            const d = Math.sqrt((r-item.rgb[0])**2 + (g-item.rgb[1])**2 + (b-item.rgb[2])**2);
+            if (d < min) { min = d; best = item.rgb; }
+        }
+        return best;
+    }
+
+    function drawBead(x, y, size, rgb) {
+        ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+        ctx.beginPath();
+        ctx.arc(x*size + size/2, y*size + size/2, size/2 - 1, 0, Math.PI*2);
+        ctx.fill();
+        // 装饰小孔
+        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+        ctx.beginPath();
+        ctx.arc(x*size + size/2, y*size + size/2, size/5, 0, Math.PI*2);
+        ctx.fill();
+    }
+
+    downloadBtn.onclick = () => {
+        const link = document.createElement('a');
+        link.download = 'my-bead-pattern.png';
+        link.href = canvas.toDataURL();
+        link.click();
+    };
+</script>
+</body>
+</html>
